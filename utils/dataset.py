@@ -74,10 +74,20 @@ def dropout_lines(caption: str, min_rate: float, max_rate: float) -> str:
     if len(lines) <= 1:
         return caption  # Nothing to drop with single line
 
-    # Randomly keep lines based on dropout ratio
-    keep_lines = [line for line in lines if random.random() > dropout_ratio]
+    # Calculate exact number of lines to drop
+    num_to_drop = int(len(lines) * dropout_ratio)
 
-    # May return empty string if all lines dropped
+    if num_to_drop == 0:
+        return caption
+
+    if num_to_drop >= len(lines):
+        # Would drop everything, return empty
+        return ''
+
+    # Randomly select which lines to drop
+    indices_to_drop = set(random.sample(range(len(lines)), num_to_drop))
+    keep_lines = [line for i, line in enumerate(lines) if i not in indices_to_drop]
+
     return '\n'.join(keep_lines)
 
 
@@ -104,7 +114,10 @@ def dropout_tags(caption: str, min_rate: float, max_rate: float, tag_delimiter: 
         return caption
 
     lines = caption.split(line_delimiter)
-    result_lines = []
+
+    # Collect all tags across all lines
+    all_tags = []
+    line_structures = []
 
     for line in lines:
         line = line.strip()
@@ -116,19 +129,56 @@ def dropout_tags(caption: str, min_rate: float, max_rate: float, tag_delimiter: 
             category_part, tags_part = line.split(':', 1)
             tags = [t.strip() for t in tags_part.split(tag_delimiter) if t.strip()]
 
-            if not tags:
-                continue  # Empty tag list, skip line
-
-            # Randomly keep tags based on dropout ratio
-            kept_tags = [tag for tag in tags if random.random() > dropout_ratio]
-
-            # Only include line if tags remain (requirement: remove empty category lines)
-            if kept_tags:
-                result_lines.append(f"{category_part}: {tag_delimiter.join(kept_tags)}{tag_delimiter}")
+            if tags:
+                start_idx = len(all_tags)
+                all_tags.extend(tags)
+                line_structures.append({
+                    'type': 'category',
+                    'category': category_part,
+                    'start_idx': start_idx,
+                    'end_idx': len(all_tags)
+                })
         else:
-            # No category format, treat whole line as single unit - keep or drop
-            if random.random() > dropout_ratio:
-                result_lines.append(line)
+            # No category format, treat as single tag
+            start_idx = len(all_tags)
+            all_tags.append(line)
+            line_structures.append({
+                'type': 'plain',
+                'start_idx': start_idx,
+                'end_idx': len(all_tags)
+            })
+
+    if not all_tags:
+        return ''
+
+    # Calculate exact number of tags to drop uniformly across all tags
+    num_to_drop = int(len(all_tags) * dropout_ratio)
+
+    if num_to_drop == 0:
+        return caption
+
+    if num_to_drop >= len(all_tags):
+        # Would drop everything, return empty
+        return ''
+
+    # Randomly select which tag indices to drop
+    indices_to_drop = set(random.sample(range(len(all_tags)), num_to_drop))
+
+    # Rebuild caption, keeping only non-dropped tags
+    result_lines = []
+
+    for structure in line_structures:
+        kept_tags = [
+            all_tags[i]
+            for i in range(structure['start_idx'], structure['end_idx'])
+            if i not in indices_to_drop
+        ]
+
+        if kept_tags:
+            if structure['type'] == 'category':
+                result_lines.append(f"{structure['category']}: {tag_delimiter.join(kept_tags)}{tag_delimiter}")
+            else:
+                result_lines.extend(kept_tags)
 
     return line_delimiter.join(result_lines)
 
