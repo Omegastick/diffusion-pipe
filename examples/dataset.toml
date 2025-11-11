@@ -43,6 +43,26 @@ frame_buckets = [1, 33]
 # "tag1, tag2, tag3" has ", " as delimiter and will possibly be shuffled like "tag3, tag1, tag2". "tag1;tag2;tag3" has ";" as delimiter and will possibly be shuffled like "tag2;tag1;tag3".
 # cache_shuffle_delimiter = ", "
 
+# Tag dropout: randomly drop individual tags from captions during training (not during caching).
+# First selects a random dropout ratio between min and max (e.g., 0.3 from range 0.0-0.7).
+# Then randomly drops that percentage of tags uniformly across all categories.
+# Both default to 0.0 (disabled). Setting max to 1.0 allows unconditional training (empty captions).
+# tag_dropout_min = 0.0
+# tag_dropout_max = 0.0
+
+# Line dropout: randomly drop entire category lines from multi-line captions during training.
+# First selects a random dropout ratio between min and max (e.g., 0.4 from range 0.2-0.5).
+# Then randomly drops that percentage of lines.
+# Applied before tag dropout. Both default to 0.0 (disabled).
+# line_dropout_min = 0.0
+# line_dropout_max = 0.0
+
+# Example usage for dropout:
+# tag_dropout_min = 0.0
+# tag_dropout_max = 0.3  # Drop 0-30% of tags per sample
+# line_dropout_min = 0.0
+# line_dropout_max = 0.2  # Drop 0-20% of lines per sample
+
 [[directory]]
 # Path to directory of images/videos, and corresponding caption files. The caption files should match the media file name, but with a .txt extension.
 # A missing caption file will log a warning, but then just train using an empty caption.

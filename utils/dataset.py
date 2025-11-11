@@ -30,8 +30,6 @@ NUM_PROC = min(8, os.cpu_count())
 CAPTIONS_JSON_FILE = 'captions.json'
 ROUND_DECIMAL_DIGITS = 3
 
-UNCOND_FRACTION = 0.0
-
 
 def shuffle_with_seed(l, seed=None):
     rng_state = random.getstate()
@@ -50,6 +48,89 @@ def shuffle_captions(captions: list[str], count: int = 0, delimiter: str = ', ',
         return delimiter.join(split)
 
     return [caption_prefix + shuffle_caption(caption, delimiter) for caption in captions for _ in range(count)]
+
+
+def dropout_lines(caption: str, min_rate: float, max_rate: float) -> str:
+    """Randomly drop lines from a multi-line caption.
+
+    Args:
+        caption: Multi-line caption with newline separators
+        min_rate: Minimum dropout ratio (0.0 to 1.0)
+        max_rate: Maximum dropout ratio (0.0 to 1.0)
+
+    Returns:
+        Caption with random lines dropped
+    """
+    if max_rate <= 0.0:
+        return caption
+
+    # Select dropout ratio uniformly from range
+    dropout_ratio = random.uniform(min_rate, max_rate)
+
+    if dropout_ratio <= 0.0:
+        return caption
+
+    lines = caption.split('\n')
+    if len(lines) <= 1:
+        return caption  # Nothing to drop with single line
+
+    # Randomly keep lines based on dropout ratio
+    keep_lines = [line for line in lines if random.random() > dropout_ratio]
+
+    # May return empty string if all lines dropped
+    return '\n'.join(keep_lines)
+
+
+def dropout_tags(caption: str, min_rate: float, max_rate: float, tag_delimiter: str = ', ', line_delimiter: str = '\n') -> str:
+    """Randomly drop tags from caption, uniformly across all category lines.
+
+    Args:
+        caption: Caption with format "Category: tag1, tag2, tag3,\nCategory2: tag4, tag5,\n"
+        min_rate: Minimum dropout ratio (0.0 to 1.0)
+        max_rate: Maximum dropout ratio (0.0 to 1.0)
+        tag_delimiter: Delimiter between tags (default ", ")
+        line_delimiter: Delimiter between category lines (default "\n")
+
+    Returns:
+        Caption with random tags dropped and empty category lines removed
+    """
+    if max_rate <= 0.0:
+        return caption
+
+    # Select dropout ratio uniformly from range
+    dropout_ratio = random.uniform(min_rate, max_rate)
+
+    if dropout_ratio <= 0.0:
+        return caption
+
+    lines = caption.split(line_delimiter)
+    result_lines = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Check if line has category format "Category: tags"
+        if ':' in line:
+            category_part, tags_part = line.split(':', 1)
+            tags = [t.strip() for t in tags_part.split(tag_delimiter) if t.strip()]
+
+            if not tags:
+                continue  # Empty tag list, skip line
+
+            # Randomly keep tags based on dropout ratio
+            kept_tags = [tag for tag in tags if random.random() > dropout_ratio]
+
+            # Only include line if tags remain (requirement: remove empty category lines)
+            if kept_tags:
+                result_lines.append(f"{category_part}: {tag_delimiter.join(kept_tags)}{tag_delimiter}")
+        else:
+            # No category format, treat whole line as single unit - keep or drop
+            if random.random() > dropout_ratio:
+                result_lines.append(line)
+
+    return line_delimiter.join(result_lines)
 
 
 def bucket_suffix(key):
@@ -236,11 +317,20 @@ class SizeBucketDataset:
 
         ret = self.latent_dataset[entry['latents_idx']]
 
-        use_uncond = UNCOND_FRACTION > 0 and random.random() < UNCOND_FRACTION
-        caption = '' if use_uncond else entry['caption']
+        caption = entry['caption']
+
+        # Apply dropout augmentation
+        # Line dropout first, then tag dropout on remaining content
+        if caption and self.line_dropout_max > 0:
+            caption = dropout_lines(caption, self.line_dropout_min, self.line_dropout_max)
+
+        if caption and self.tag_dropout_max > 0:
+            caption = dropout_tags(caption, self.tag_dropout_min, self.tag_dropout_max,
+                                  self.shuffle_delimiter, '\n')
 
         for ds, uncond_ds in zip(self.text_embedding_datasets, self.uncond_text_embeddings):
-            emb_dict = uncond_ds[0] if use_uncond else ds.get_text_embeddings(tuple(entry['image_spec']), entry['caption_number'])
+            # Use uncond if caption is empty after dropout
+            emb_dict = uncond_ds[0] if not caption else ds.get_text_embeddings(tuple(entry['image_spec']), entry['caption_number'])
             ret.update(emb_dict)
         ret['caption'] = caption
         return ret
@@ -363,6 +453,13 @@ class DirectoryDataset:
         self.shuffle = directory_config.get('cache_shuffle_num', dataset_config.get('cache_shuffle_num', 0))
         self.directory_config['cache_shuffle_num'] = self.shuffle # Make accessible if it wasn't yet, for picking one out
         self.shuffle_delimiter = directory_config.get('cache_shuffle_delimiter', dataset_config.get('cache_shuffle_delimiter', ", "))
+
+        # Dropout configuration (from directory or dataset config)
+        self.tag_dropout_min = self.directory_config.get('tag_dropout_min', 0.0)
+        self.tag_dropout_max = self.directory_config.get('tag_dropout_max', 0.0)
+        self.line_dropout_min = self.directory_config.get('line_dropout_min', 0.0)
+        self.line_dropout_max = self.directory_config.get('line_dropout_max', 0.0)
+
         self.path = Path(self.directory_config['path'])
         self.mask_path = Path(self.directory_config['mask_path']) if 'mask_path' in self.directory_config else None
         self.control_path = Path(self.directory_config['control_path']) if 'control_path' in self.directory_config else None
@@ -608,6 +705,11 @@ class DirectoryDataset:
         directory_config.setdefault('shuffle_tags', dataset_config.get('shuffle_tags', False))
         directory_config.setdefault('caption_prefix', dataset_config.get('caption_prefix', ''))
         directory_config.setdefault('num_repeats', dataset_config.get('num_repeats', 1))
+        # Add dropout defaults
+        directory_config.setdefault('tag_dropout_min', dataset_config.get('tag_dropout_min', 0.0))
+        directory_config.setdefault('tag_dropout_max', dataset_config.get('tag_dropout_max', 0.0))
+        directory_config.setdefault('line_dropout_min', dataset_config.get('line_dropout_min', 0.0))
+        directory_config.setdefault('line_dropout_max', dataset_config.get('line_dropout_max', 0.0))
 
     def _metadata_map_fn(self):
         tarfile_map = {}
