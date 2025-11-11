@@ -309,6 +309,7 @@ class SizeBucketDataset:
             raise ValueError(f'num_repeats must be >0, was {self.num_repeats}')
 
         # Dropout configuration (from directory config)
+        self.shuffle_delimiter = directory_config.get('cache_shuffle_delimiter', ", ")
         self.tag_dropout_min = self.directory_config.get("tag_dropout_min", 0.0)
         self.tag_dropout_max = self.directory_config.get("tag_dropout_max", 0.0)
         self.line_dropout_min = self.directory_config.get("line_dropout_min", 0.0)
