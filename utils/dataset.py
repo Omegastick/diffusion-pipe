@@ -308,6 +308,12 @@ class SizeBucketDataset:
         if self.num_repeats <= 0:
             raise ValueError(f'num_repeats must be >0, was {self.num_repeats}')
 
+        # Dropout configuration (from directory config)
+        self.tag_dropout_min = self.directory_config.get("tag_dropout_min", 0.0)
+        self.tag_dropout_max = self.directory_config.get("tag_dropout_max", 0.0)
+        self.line_dropout_min = self.directory_config.get("line_dropout_min", 0.0)
+        self.line_dropout_max = self.directory_config.get("line_dropout_max", 0.0)
+
     def cache_latents(self, map_fn, regenerate_cache=False, trust_cache=False, caching_batch_size=1):
         print(f'caching latents: {self.size_bucket}')
         self.latent_dataset = _map_and_cache(
